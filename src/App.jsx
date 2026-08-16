@@ -530,3 +530,4 @@ function HelpRow({ items, result }) {
     </div>
   );
 }
+
