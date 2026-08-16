@@ -81,7 +81,9 @@ const PIECE_DEFS = {
   rhombeRouge: {
     label: "Losange rouge",
     color: "#C93A42", w: 1, h: 3,
-    pts: [[1, 0], [1, 1], [0, 3], [0, 2]], // carré plein central + 2 demi-carrés opposés
+    // carré central plein (case du milieu) + demi-carré en haut (coupé dans un sens)
+    // + demi-carré en bas (coupé dans l'autre sens) → parallélogramme continu
+    pts: [[1, 0], [1, 2], [0, 3], [0, 1]],
     canRotate: true, canFlip: true, ext: null,
   },
   triNoir: {
