@@ -1,0 +1,16 @@
+{
+  "name": "Orapa Mine — Carnet de faisceaux",
+  "short_name": "Orapa Mine",
+  "description": "Suivi des tirs lumineux et des hypothèses de gemmes pour le jeu Orapa Mine.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#12121C",
+  "theme_color": "#12121C",
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}
