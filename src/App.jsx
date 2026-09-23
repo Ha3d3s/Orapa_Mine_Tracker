@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import SoloTracker from "./SoloTracker";
 import DuelGame from "./DuelGame";
 import PuzzleMode from "./PuzzleMode";
@@ -7,10 +7,29 @@ import StatsScreen from "./StatsScreen";
 import ErrorBoundary from "./ErrorBoundary";
 import { Gem, Users, Swords, Puzzle, NotebookPen, Bot, ChevronLeft, BarChart3, BookOpen } from "lucide-react";
 import Tutorial, { hasSeenTutorial } from "./Tutorial";
+import { getStats, unlockSecretNico } from "./stats";
+import { newlyUnlockedBadges } from "./badges";
+import BadgeUnlockedModal from "./BadgeUnlockedModal";
 
 export default function App() {
   const [mode, setMode] = useState(null); // null | 'soloMenu' | 'soloFree' | 'aiMode' | 'duel' | 'puzzle' | 'stats'
   const [showTutorial, setShowTutorial] = useState(() => !hasSeenTutorial());
+  const [newBadges, setNewBadges] = useState(null);
+  const tapCountRef = useRef(0);
+  const tapTimerRef = useRef(null);
+
+  function handleLogoTap() {
+    tapCountRef.current += 1;
+    clearTimeout(tapTimerRef.current);
+    tapTimerRef.current = setTimeout(() => { tapCountRef.current = 0; }, 2000);
+    if (tapCountRef.current >= 5) {
+      tapCountRef.current = 0;
+      const before = getStats();
+      const after = unlockSecretNico();
+      const earned = newlyUnlockedBadges(before, after);
+      if (earned.length) setNewBadges(earned);
+    }
+  }
 
   if (mode === "soloFree") return <ErrorBoundary onReset={() => setMode("soloMenu")}><SoloTracker onExit={() => setMode("soloMenu")} /></ErrorBoundary>;
   if (mode === "aiMode") return <ErrorBoundary onReset={() => setMode("soloMenu")}><AIMode onExit={() => setMode("soloMenu")} /></ErrorBoundary>;
@@ -51,7 +70,7 @@ export default function App() {
   return (
     <div className="min-h-screen w-full bg-[#12121C] text-[#EDE9E0] font-sans flex flex-col items-center justify-center px-6 gap-8">
       <div className="text-center">
-        <Gem size={40} className="mx-auto text-[#F2C744] mb-3" />
+        <Gem size={40} className="mx-auto text-[#F2C744] mb-3 cursor-pointer" onClick={handleLogoTap} />
         <h1 className="text-2xl font-bold" style={{ fontFamily: "Georgia, serif" }}>Orapa Mine</h1>
         <p className="text-sm text-[#9A94A8] mt-1">Carnet de faisceaux, puzzles &amp; duel en ligne</p>
       </div>
@@ -90,6 +109,7 @@ export default function App() {
       </div>
 
       {showTutorial && <Tutorial onClose={() => setShowTutorial(false)} />}
+      <BadgeUnlockedModal badges={newBadges} onClose={() => setNewBadges(null)} />
     </div>
   );
 }

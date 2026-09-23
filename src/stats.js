@@ -7,6 +7,14 @@ const DEFAULT_STATS = {
   duelLosses: 0,
   puzzlesSolved: 0,
   puzzleTotalSeconds: 0,
+  fastestHardPuzzle: null,
+  currentDuelWinStreak: 0,
+  bestDuelWinStreak: 0,
+  currentDuelLossStreak: 0,
+  worstDuelLossStreak: 0,
+  dailyDatesSolved: [],
+  dailyStreak: 0,
+  secretNico: false,
 };
 
 export function getStats() {
@@ -31,14 +39,45 @@ export function recordAIResult(won) {
 
 export function recordDuelResult(won) {
   const s = getStats();
-  if (won) s.duelWins += 1; else s.duelLosses += 1;
+  if (won) {
+    s.duelWins += 1;
+    s.currentDuelWinStreak += 1;
+    s.currentDuelLossStreak = 0;
+    s.bestDuelWinStreak = Math.max(s.bestDuelWinStreak, s.currentDuelWinStreak);
+  } else {
+    s.duelLosses += 1;
+    s.currentDuelLossStreak += 1;
+    s.currentDuelWinStreak = 0;
+    s.worstDuelLossStreak = Math.max(s.worstDuelLossStreak, s.currentDuelLossStreak);
+  }
   return save(s);
 }
 
-export function recordPuzzleSolved(seconds) {
+export function recordPuzzleSolved(seconds, difficulty) {
   const s = getStats();
   s.puzzlesSolved += 1;
   s.puzzleTotalSeconds += seconds;
+  if (difficulty === "difficile" && (s.fastestHardPuzzle == null || seconds < s.fastestHardPuzzle)) {
+    s.fastestHardPuzzle = seconds;
+  }
+  return save(s);
+}
+
+export function recordDailySolved(dateStr) {
+  const s = getStats();
+  if (s.dailyDatesSolved.includes(dateStr)) return s;
+  s.dailyDatesSolved.push(dateStr);
+  const yesterday = new Date(dateStr);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yStr = yesterday.toISOString().slice(0, 10);
+  s.dailyStreak = s.dailyDatesSolved.includes(yStr) ? s.dailyStreak + 1 : 1;
+  return save(s);
+}
+
+export function unlockSecretNico() {
+  const s = getStats();
+  if (s.secretNico) return s;
+  s.secretNico = true;
   return save(s);
 }
 

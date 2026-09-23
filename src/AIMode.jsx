@@ -5,7 +5,9 @@ import {
   castBeam, pieceAtCell, boardsMatch, colorById,
 } from "./orapaEngine";
 import DuelBoard from "./DuelBoard";
-import { recordAIResult } from "./stats";
+import { recordAIResult, getStats } from "./stats";
+import { newlyUnlockedBadges } from "./badges";
+import BadgeUnlockedModal from "./BadgeUnlockedModal";
 import MuteButton from "./MuteButton";
 import { playShot, playAbsorbed, playWin, playLose, playWrong } from "./sounds";
 
@@ -84,6 +86,7 @@ export default function AIMode({ onExit }) {
   const [confirmBeamPort, setConfirmBeamPort] = useState(null);
   const [confirmCell, setConfirmCell] = useState(null);
   const [won, setWon] = useState(false);
+  const [newBadges, setNewBadges] = useState(null);
 
   // sauvegarde locale automatique — uniquement pendant une partie en cours (reprend après rechargement)
   useEffect(() => {
@@ -143,11 +146,20 @@ export default function AIMode({ onExit }) {
 
   function submitGuess() {
     const correct = boardsMatch(hiddenBoard, guessPieces);
-    if (correct) { setWon(true); setScreen("ended"); recordAIResult(true); playWin(); return; }
+    const before = getStats();
+    if (correct) {
+      setWon(true); setScreen("ended"); const after = recordAIResult(true); playWin();
+      const earned = newlyUnlockedBadges(before, after);
+      if (earned.length) setNewBadges(earned);
+      return;
+    }
     const left = guessesLeft - 1;
     setGuessesLeft(left);
-    if (left <= 0) { setWon(false); setScreen("ended"); recordAIResult(false); playLose(); }
-    else playWrong();
+    if (left <= 0) {
+      setWon(false); setScreen("ended"); const after = recordAIResult(false); playLose();
+      const earned = newlyUnlockedBadges(before, after);
+      if (earned.length) setNewBadges(earned);
+    } else playWrong();
   }
 
   const beamHistory = history.filter((q) => q.type === "beam");
@@ -277,6 +289,7 @@ export default function AIMode({ onExit }) {
       </div>
 
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      <BadgeUnlockedModal badges={newBadges} onClose={() => setNewBadges(null)} />
     </div>
   );
 }

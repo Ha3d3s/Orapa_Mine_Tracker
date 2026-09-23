@@ -7,7 +7,9 @@ import {
 import { Users, Copy, Check, LogOut, Gem, CheckCircle2, Trophy, Skull, HelpCircle, X, RefreshCw } from "lucide-react";
 import PieceBoardEditor from "./PieceBoardEditor";
 import DuelBoard from "./DuelBoard";
-import { recordDuelResult } from "./stats";
+import { recordDuelResult, getStats } from "./stats";
+import { newlyUnlockedBadges } from "./badges";
+import BadgeUnlockedModal from "./BadgeUnlockedModal";
 import MuteButton from "./MuteButton";
 import { playShot, playAbsorbed, playWin, playLose } from "./sounds";
 import {
@@ -56,6 +58,7 @@ export default function DuelGame({ onExit }) {
   const statsRecordedRef = useRef(false);
   const soundPlayedRef = useRef(new Set());
   const matchNumberRef = useRef(null);
+  const [newBadges, setNewBadges] = useState(null);
   const prevTurnRef = useRef(null);
 
   useEffect(() => {
@@ -235,8 +238,11 @@ export default function DuelGame({ onExit }) {
     if (!room || room.phase !== "ended" || !uid || statsRecordedRef.current) return;
     statsRecordedRef.current = true;
     const won = room.winner === uid;
-    recordDuelResult(won);
+    const before = getStats();
+    const after = recordDuelResult(won);
     won ? playWin() : playLose();
+    const earned = newlyUnlockedBadges(before, after);
+    if (earned.length) setNewBadges(earned);
   }, [room, uid]);
 
   // révélation des plateaux à la fin de la partie
@@ -553,6 +559,7 @@ export default function DuelGame({ onExit }) {
       </div>
 
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      <BadgeUnlockedModal badges={newBadges} onClose={() => setNewBadges(null)} />
 
       {incomingReaction && (
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none flex flex-col items-center animate-bounce">

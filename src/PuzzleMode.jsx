@@ -1,14 +1,20 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
-import { Gem, ChevronLeft, Clock, Trophy, RotateCcw, HelpCircle, X } from "lucide-react";
+import { Gem, ChevronLeft, Clock, Trophy, RotateCcw, HelpCircle, X, Lightbulb, CalendarDays, Wrench } from "lucide-react";
 import { PUZZLE_COUNT, generatePuzzle, difficultyForIndex } from "./puzzles";
-import { PORTS, boardsMatch, colorById } from "./orapaEngine";
+import { generateDailyPuzzle, todayDateStr } from "./dailyPuzzle";
+import { PORTS, boardsMatch, colorById, pieceAtCell, touchedCells } from "./orapaEngine";
 import DuelBoard from "./DuelBoard";
-import { recordPuzzleSolved } from "./stats";
+import { recordPuzzleSolved, recordDailySolved, getStats } from "./stats";
+import { newlyUnlockedBadges } from "./badges";
+import BadgeUnlockedModal from "./BadgeUnlockedModal";
 import MuteButton from "./MuteButton";
 import { playWin, playWrong } from "./sounds";
-import { submitScore, fetchTopScores, getSavedName, saveName } from "./leaderboard";
+import { submitScore, fetchTopScores, submitDailyScore, fetchTopDailyScores, getSavedName, saveName } from "./leaderboard";
+import CustomPuzzle from "./CustomPuzzle";
 
 const STORAGE_KEY = "orapa_puzzle_best_v1";
+const DAILY_BEST_KEY = "orapa_daily_best_v1";
+const HINT_PENALTY = 15;
 
 function loadBestTimes() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); } catch { return {}; }
@@ -21,6 +27,17 @@ function saveBestTime(index, seconds) {
   }
   return best;
 }
+function loadDailyBest() {
+  try { return JSON.parse(localStorage.getItem(DAILY_BEST_KEY) || "{}"); } catch { return {}; }
+}
+function saveDailyBest(dateStr, seconds) {
+  const best = loadDailyBest();
+  if (best[dateStr] == null || seconds < best[dateStr]) {
+    best[dateStr] = seconds;
+    localStorage.setItem(DAILY_BEST_KEY, JSON.stringify(best));
+  }
+  return best;
+}
 function formatTime(sec) {
   const m = Math.floor(sec / 60), s = sec % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
@@ -29,16 +46,20 @@ const DIFF_LABEL = { tresfacile: "Très facile", facile: "Facile", moyen: "Moyen
 const DIFF_COLOR = { tresfacile: "#8FC5EA", facile: "#5FBF6B", moyen: "#F2C744", difficile: "#E05C5C" };
 
 export default function PuzzleMode({ onExit }) {
-  const [screen, setScreen] = useState("list"); // 'list' | 'play'
+  const [screen, setScreen] = useState("list");
   const [showHelp, setShowHelp] = useState(false);
-  const [puzzleIndex, setPuzzleIndex] = useState(0);
+  const [newBadges, setNewBadges] = useState(null);
+
+  const [puzzleSource, setPuzzleSource] = useState({ type: "regular", index: 0 });
   const [guessPieces, setGuessPieces] = useState([]);
   const [marks, setMarks] = useState(() => new Set());
+  const [hints, setHints] = useState([]);
   const [solved, setSolved] = useState(false);
   const [finalTime, setFinalTime] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [elapsed, setElapsed] = useState(0);
   const [bestTimes, setBestTimes] = useState(() => loadBestTimes());
+  const [dailyBest, setDailyBest] = useState(() => loadDailyBest());
   const [playerName, setPlayerName] = useState(() => getSavedName());
   const [lbScores, setLbScores] = useState(null);
   const [lbLoading, setLbLoading] = useState(false);
@@ -46,7 +67,15 @@ export default function PuzzleMode({ onExit }) {
   const [lbError, setLbError] = useState(null);
   const startRef = useRef(null);
 
-  const puzzle = useMemo(() => generatePuzzle(puzzleIndex), [puzzleIndex]);
+  const [peekIndex, setPeekIndex] = useState(null);
+
+  const isDaily = puzzleSource.type === "daily";
+  const today = todayDateStr();
+
+  const puzzle = useMemo(
+    () => (isDaily ? generateDailyPuzzle(puzzleSource.dateStr) : generatePuzzle(puzzleSource.index)),
+    [puzzleSource]
+  );
 
   const beamHistory = useMemo(() => PORTS.map((p) => ({
     params: { side: p.side, index: p.index },
@@ -63,7 +92,11 @@ export default function PuzzleMode({ onExit }) {
     if (!solved) { setLbScores(null); setLbSubmitted(false); return; }
     (async () => {
       if (playerName.trim()) {
-        try { await submitScore(puzzleIndex, finalTime, playerName.trim()); setLbSubmitted(true); } catch (e) { /* pas grave, hors-ligne ou indisponible */ }
+        try {
+          if (isDaily) await submitDailyScore(puzzleSource.dateStr, finalTime, playerName.trim());
+          else await submitScore(puzzleSource.index, finalTime, playerName.trim());
+          setLbSubmitted(true);
+        } catch (e) {}
       }
       await loadLeaderboard();
     })();
@@ -74,7 +107,7 @@ export default function PuzzleMode({ onExit }) {
     setLbLoading(true);
     setLbError(null);
     try {
-      setLbScores(await fetchTopScores(puzzleIndex));
+      setLbScores(isDaily ? await fetchTopDailyScores(puzzleSource.dateStr) : await fetchTopScores(puzzleSource.index));
     } catch (e) {
       setLbScores(null);
       setLbError("Classement indisponible pour l'instant (index Firestore probablement en cours de création — réessaie dans quelques minutes).");
@@ -85,19 +118,32 @@ export default function PuzzleMode({ onExit }) {
   async function handlePublishScore() {
     if (!playerName.trim()) return;
     saveName(playerName.trim());
-    try { await submitScore(puzzleIndex, finalTime, playerName.trim()); setLbSubmitted(true); } catch (e) { /* réessaiera au prochain puzzle */ }
+    try {
+      if (isDaily) await submitDailyScore(puzzleSource.dateStr, finalTime, playerName.trim());
+      else await submitScore(puzzleSource.index, finalTime, playerName.trim());
+      setLbSubmitted(true);
+    } catch (e) {}
     await loadLeaderboard();
   }
 
-  function openPuzzle(index) {
-    setPuzzleIndex(index);
+  function resetPlayState() {
     setGuessPieces([]);
     setMarks(new Set());
+    setHints([]);
     setSolved(false);
     setFinalTime(null);
     setFeedback(null);
     startRef.current = Date.now();
     setElapsed(0);
+  }
+  function openPuzzle(index) {
+    setPuzzleSource({ type: "regular", index });
+    resetPlayState();
+    setScreen("play");
+  }
+  function openDaily() {
+    setPuzzleSource({ type: "daily", dateStr: today });
+    resetPlayState();
     setScreen("play");
   }
 
@@ -110,13 +156,38 @@ export default function PuzzleMode({ onExit }) {
     });
   }
 
+  function useHint() {
+    const occupied = new Set();
+    puzzle.pieces.forEach((p) => touchedCells(p.type, p.col, p.row, p.rot, p.flipH, p.flipV).forEach((k) => occupied.add(k)));
+    const already = new Set(hints.map((h) => h.params.col + "," + h.params.row));
+    const remaining = [...occupied].filter((k) => !already.has(k));
+    if (remaining.length === 0) return;
+    const key = remaining[Math.floor(Math.random() * remaining.length)];
+    const [col, row] = key.split(",").map(Number);
+    const found = pieceAtCell(puzzle.pieces, col, row);
+    let answer;
+    if (!found) answer = { occupied: false };
+    else if (found.absorbed) answer = { occupied: true, absorbed: true };
+    else if (found.transparent) answer = { occupied: true, transparent: true };
+    else answer = { occupied: true, colorId: found.colorId };
+    setHints((h) => [...h, { params: { col, row }, answer }]);
+  }
+
   function checkSolution() {
     if (boardsMatch(puzzle.pieces, guessPieces)) {
-      const secs = Math.floor((Date.now() - startRef.current) / 1000);
+      const secs = Math.floor((Date.now() - startRef.current) / 1000) + hints.length * HINT_PENALTY;
       setFinalTime(secs);
       setSolved(true);
-      setBestTimes(saveBestTime(puzzleIndex, secs));
-      recordPuzzleSolved(secs);
+      const before = getStats();
+      if (isDaily) {
+        setDailyBest(saveDailyBest(puzzleSource.dateStr, secs));
+        recordDailySolved(puzzleSource.dateStr);
+      } else {
+        setBestTimes(saveBestTime(puzzleSource.index, secs));
+      }
+      const after = recordPuzzleSolved(secs, isDaily ? "moyen" : puzzle.difficulty);
+      const earned = newlyUnlockedBadges(before, after);
+      if (earned.length) setNewBadges(earned);
       playWin();
     } else {
       setFeedback("wrong");
@@ -126,6 +197,9 @@ export default function PuzzleMode({ onExit }) {
   }
 
   const complete = guessPieces.length === puzzle.allowedTypes.length;
+  const alreadySolvedToday = dailyBest[today] != null;
+
+  if (screen === "custom") return <CustomPuzzle onBack={() => setScreen("list")} />;
 
   return (
     <div className="min-h-screen w-full bg-[#12121C] text-[#EDE9E0] font-sans">
@@ -146,6 +220,8 @@ export default function PuzzleMode({ onExit }) {
       </header>
 
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      <BadgeUnlockedModal badges={newBadges} onClose={() => setNewBadges(null)} />
+      {peekIndex != null && <LeaderboardPeekModal target={peekIndex} onClose={() => setPeekIndex(null)} />}
 
       <div className="p-4 max-w-md mx-auto">
         {screen === "list" && (
@@ -153,6 +229,25 @@ export default function PuzzleMode({ onExit }) {
             <p className="text-sm text-[#9A94A8]">
               Toutes les sorties de faisceaux sont déjà données autour du plateau. Retrouve la disposition exacte des pièces le plus vite possible — sans poser de question.
             </p>
+
+            <div className="bg-gradient-to-br from-[#2E2650] to-[#1B1B29] border border-[#3A2F66] rounded-2xl p-4">
+              <div className="flex items-center gap-2 mb-1">
+                <CalendarDays size={16} className="text-[#F2C744]" />
+                <h3 className="text-sm font-semibold">Puzzle du jour</h3>
+              </div>
+              <p className="text-[11px] text-[#9A94A8] mb-3">Le même pour tout le monde aujourd'hui — un classement dédié t'attend.</p>
+              <div className="flex gap-2">
+                <button onClick={openDaily} className="flex-1 py-2.5 rounded-xl bg-[#F2C744] hover:bg-[#E0B62F] text-[#12121C] font-semibold text-sm">
+                  {alreadySolvedToday ? `Rejouer (${formatTime(dailyBest[today])})` : "Jouer"}
+                </button>
+                <button onClick={() => setPeekIndex("daily")} className="px-3 py-2.5 rounded-xl bg-[#232336] hover:bg-[#2E2E46] text-xs">Classement</button>
+              </div>
+            </div>
+
+            <button onClick={() => setScreen("custom")} className="flex items-center gap-2 justify-center text-xs text-[#6B6580] hover:text-[#EDE9E0] bg-[#1B1B29] border border-[#2A2A3A] rounded-xl py-2.5">
+              <Wrench size={14} /> Créer ou jouer un puzzle personnalisé
+            </button>
+
             {["tresfacile", "facile", "moyen", "difficile"].map((diff) => {
               const indices = Array.from({ length: PUZZLE_COUNT }, (_, i) => i).filter((i) => difficultyForIndex(i) === diff);
               return (
@@ -160,18 +255,20 @@ export default function PuzzleMode({ onExit }) {
                   <h3 className="text-sm font-semibold mb-2" style={{ color: DIFF_COLOR[diff] }}>{DIFF_LABEL[diff]}</h3>
                   <div className="grid grid-cols-5 gap-2">
                     {indices.map((i) => (
-                      <button
-                        key={i}
-                        onClick={() => openPuzzle(i)}
-                        className="flex flex-col items-center justify-center gap-0.5 bg-[#1B1B29] hover:bg-[#232336] border border-[#2A2A3A] rounded-xl py-2.5"
-                      >
-                        <span className="text-sm font-semibold">{i + 1}</span>
-                        {bestTimes[i] != null ? (
-                          <span className="text-[9px] text-[#5FBF6B]">{formatTime(bestTimes[i])}</span>
-                        ) : (
-                          <span className="text-[9px] text-[#4A4560]">—</span>
-                        )}
-                      </button>
+                      <div key={i} className="flex flex-col gap-1">
+                        <button
+                          onClick={() => openPuzzle(i)}
+                          className="flex flex-col items-center justify-center gap-0.5 bg-[#1B1B29] hover:bg-[#232336] border border-[#2A2A3A] rounded-xl py-2.5"
+                        >
+                          <span className="text-sm font-semibold">{i + 1}</span>
+                          {bestTimes[i] != null ? (
+                            <span className="text-[9px] text-[#5FBF6B]">{formatTime(bestTimes[i])}</span>
+                          ) : (
+                            <span className="text-[9px] text-[#4A4560]">—</span>
+                          )}
+                        </button>
+                        <button onClick={() => setPeekIndex(i)} className="text-[8px] text-[#6B6580] hover:text-[#F2C744]">classement</button>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -184,12 +281,13 @@ export default function PuzzleMode({ onExit }) {
           <div>
             <div className="flex items-center justify-between mb-3">
               <div>
-                <h3 className="text-base font-semibold">Puzzle {puzzleIndex + 1}</h3>
-                <span className="text-xs" style={{ color: DIFF_COLOR[puzzle.difficulty] }}>{DIFF_LABEL[puzzle.difficulty]}</span>
+                <h3 className="text-base font-semibold">{isDaily ? "Puzzle du jour" : `Puzzle ${puzzleSource.index + 1}`}</h3>
+                {!isDaily && <span className="text-xs" style={{ color: DIFF_COLOR[puzzle.difficulty] }}>{DIFF_LABEL[puzzle.difficulty]}</span>}
+                {isDaily && <span className="text-xs text-[#8FC5EA]">{today}</span>}
               </div>
               <div className="flex items-center gap-1.5 text-sm font-mono bg-[#1B1B29] border border-[#2A2A3A] rounded-full px-3 py-1.5">
                 <Clock size={14} className={solved ? "text-[#5FBF6B]" : "text-[#F2C744]"} />
-                {formatTime(solved ? finalTime : elapsed)}
+                {formatTime(solved ? finalTime : elapsed + hints.length * HINT_PENALTY)}
               </div>
             </div>
 
@@ -197,10 +295,12 @@ export default function PuzzleMode({ onExit }) {
               <div className="flex flex-col items-center gap-4 py-8">
                 <Trophy size={48} className="text-[#F2C744]" />
                 <h2 className="text-xl font-bold">Résolu en {formatTime(finalTime)} !</h2>
-                {bestTimes[puzzleIndex] === finalTime && <p className="text-sm text-[#5FBF6B]">Nouveau meilleur temps 🎉</p>}
+                {hints.length > 0 && <p className="text-xs text-[#9A94A8]">(dont {hints.length} indice{hints.length > 1 ? "s" : ""} · +{hints.length * HINT_PENALTY}s)</p>}
+                {!isDaily && bestTimes[puzzleSource.index] === finalTime && <p className="text-sm text-[#5FBF6B]">Nouveau meilleur temps 🎉</p>}
+                {isDaily && dailyBest[today] === finalTime && <p className="text-sm text-[#5FBF6B]">Nouveau meilleur temps du jour 🎉</p>}
 
                 <div className="w-full bg-[#1B1B29] border border-[#2A2A3A] rounded-xl p-3">
-                  <h4 className="text-xs font-semibold text-[#9A94A8] mb-2">Classement mondial de ce puzzle</h4>
+                  <h4 className="text-xs font-semibold text-[#9A94A8] mb-2">Classement mondial {isDaily ? "du jour" : "de ce puzzle"}</h4>
                   {!lbSubmitted && (
                     <div className="flex gap-2 mb-3">
                       <input
@@ -233,8 +333,8 @@ export default function PuzzleMode({ onExit }) {
 
                 <div className="w-full flex gap-2">
                   <button onClick={() => setScreen("list")} className="flex-1 py-2.5 rounded-xl bg-[#232336] hover:bg-[#2E2E46] text-sm">Liste des puzzles</button>
-                  {puzzleIndex < PUZZLE_COUNT - 1 && (
-                    <button onClick={() => openPuzzle(puzzleIndex + 1)} className="flex-1 py-2.5 rounded-xl bg-[#F2C744] hover:bg-[#E0B62F] text-[#12121C] font-semibold text-sm">
+                  {!isDaily && puzzleSource.index < PUZZLE_COUNT - 1 && (
+                    <button onClick={() => openPuzzle(puzzleSource.index + 1)} className="flex-1 py-2.5 rounded-xl bg-[#F2C744] hover:bg-[#E0B62F] text-[#12121C] font-semibold text-sm">
                       Puzzle suivant
                     </button>
                   )}
@@ -249,7 +349,7 @@ export default function PuzzleMode({ onExit }) {
                   marks={marks}
                   onToggleMark={toggleMark}
                   beamHistory={beamHistory}
-                  cellHistory={[]}
+                  cellHistory={hints}
                   actionMode={null}
                   canInteractBoard={false}
                   onPortTap={() => {}}
@@ -264,13 +364,62 @@ export default function PuzzleMode({ onExit }) {
                   >
                     Vérifier ma solution {!complete && `(${guessPieces.length}/${puzzle.allowedTypes.length})`}
                   </button>
-                  <button onClick={() => openPuzzle(puzzleIndex)} className="text-xs text-[#6B6580] hover:text-[#EDE9E0] flex items-center gap-1 mt-1">
-                    <RotateCcw size={12} /> Recommencer ce puzzle
-                  </button>
+                  <div className="flex gap-4 mt-1">
+                    <button onClick={useHint} className="text-xs text-[#F2C744] hover:text-[#E0B62F] flex items-center gap-1">
+                      <Lightbulb size={12} /> Indice (+{HINT_PENALTY}s)
+                    </button>
+                    <button onClick={() => openPuzzle(puzzleSource.index)} className="text-xs text-[#6B6580] hover:text-[#EDE9E0] flex items-center gap-1">
+                      <RotateCcw size={12} /> Recommencer
+                    </button>
+                  </div>
                 </div>
               </>
             )}
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LeaderboardPeekModal({ target, onClose }) {
+  const [scores, setScores] = useState(null);
+  const [error, setError] = useState(null);
+  const isDaily = target === "daily";
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = isDaily ? await fetchTopDailyScores(todayDateStr()) : await fetchTopScores(target);
+        if (!cancelled) setScores(data);
+      } catch (e) {
+        if (!cancelled) setError("Classement indisponible pour l'instant (index Firestore en cours de création ?).");
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target]);
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-[#1B1B29] rounded-2xl w-full max-w-sm p-5 border border-[#2A2A3A]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-bold">Classement {isDaily ? "du jour" : `— Puzzle ${target + 1}`}</h3>
+          <button onClick={onClose}><X size={18} /></button>
+        </div>
+        {error && <p className="text-xs text-[#E88]">{error}</p>}
+        {!error && scores === null && <p className="text-xs text-[#6B6580]">Chargement…</p>}
+        {!error && scores && scores.length === 0 && <p className="text-xs text-[#6B6580]">Personne n'a encore publié de temps.</p>}
+        {!error && scores && scores.length > 0 && (
+          <ol className="text-sm flex flex-col gap-1.5">
+            {scores.map((s, i) => (
+              <li key={s.uid} className="flex items-center justify-between">
+                <span className="text-[#C9C4D8]">{i + 1}. {s.name}</span>
+                <span className="font-mono text-[#F2C744]">{formatTime(s.seconds)}</span>
+              </li>
+            ))}
+          </ol>
         )}
       </div>
     </div>

@@ -1,6 +1,7 @@
 import React from "react";
-import { Gem, ChevronLeft, Bot, Swords, Puzzle } from "lucide-react";
+import { Gem, ChevronLeft, Bot, Swords, Puzzle, Award } from "lucide-react";
 import { getStats, averagePuzzleTime } from "./stats";
+import { BADGES, unlockedBadgeIds } from "./badges";
 
 function formatTime(sec) {
   const m = Math.floor(sec / 60), s = sec % 60;
@@ -28,6 +29,7 @@ export default function StatsScreen({ onExit }) {
   const avg = averagePuzzleTime(s);
   const aiTotal = s.aiWins + s.aiLosses;
   const duelTotal = s.duelWins + s.duelLosses;
+  const unlocked = unlockedBadgeIds(s);
 
   return (
     <div className="min-h-screen w-full bg-[#12121C] text-[#EDE9E0] font-sans">
@@ -68,6 +70,28 @@ export default function StatsScreen({ onExit }) {
             { label: "Temps moyen", value: avg != null ? formatTime(avg) : "—" },
           ]}
         />
+        <div className="bg-[#1B1B29] border border-[#2A2A3A] rounded-2xl p-4">
+          <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+            <Award size={16} className="text-[#F2C744]" /> Badges ({unlocked.size}/{BADGES.length})
+          </h3>
+          <div className="grid grid-cols-3 gap-2">
+            {BADGES.map((b) => {
+              const has = unlocked.has(b.id);
+              const hideDetails = b.secret && !has;
+              return (
+                <div
+                  key={b.id}
+                  className={"flex flex-col items-center gap-1 rounded-xl px-2 py-3 text-center " + (has ? "bg-[#2E2650] border border-[#F2C744]" : "bg-[#12121C] border border-[#2A2A3A] opacity-50")}
+                >
+                  <span className="text-2xl">{hideDetails ? "❓" : b.emoji}</span>
+                  <span className="text-[9px] font-semibold leading-tight">{hideDetails ? "???" : b.name}</span>
+                  <span className="text-[8px] text-[#8A84A0] leading-tight">{hideDetails ? "Badge secret" : b.desc}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         {aiTotal + duelTotal + s.puzzlesSolved === 0 && (
           <p className="text-center text-xs text-[#6B6580] mt-2">Joue quelques parties pour voir tes statistiques apparaître ici.</p>
         )}
